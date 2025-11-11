@@ -1,61 +1,69 @@
-from __future__ import annotations
+from typing import List
 
 from dotenv import load_dotenv
-from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
+from langchain.tools import tool, BaseTool
 from langchain_openai import ChatOpenAI
-from langchain_tavily import TavilySearch
 
-from schemas import AgentResponse
+from callbacks import AgentCallbackHandler
 
 load_dotenv()
 
-SYSTEM_PROMPT = (
-    "You are a job search assistant. Use the available tools to find up-to-date "
-    "information about AI engineer roles that mention LangChain. Always populate the "
-    "structured response schema and cite the source URLs you rely on."
-)
 
-tools = [TavilySearch()]
-llm = ChatOpenAI(model="gpt-4o-mini")
+@tool
+def get_text_length(text: str) -> int:
+    """Returns the length of a text by characters"""
+    print(f"get_text_length enter with {text=}")
+    text = text.strip("'\n").strip(
+        '"'
+    )  # stripping away non alphabetic characters just in case
 
-agent = create_agent(
-    model=llm,
-    tools=tools,
-    system_prompt=SYSTEM_PROMPT,
-    response_format=AgentResponse,
-)
+    return len(text)
 
 
-def run_job_search(query: str) -> AgentResponse:
-    """Invoke the agent and coerce the result into AgentResponse."""
-    result_state = agent.invoke({"messages": [HumanMessage(content=query)]})
-
-    structured = result_state.get("structured_response")
-    if structured is not None:
-        if isinstance(structured, AgentResponse):
-            return structured
-        return AgentResponse.model_validate(structured)
-
-    # Fallback: return the latest AI message if structured output is missing.
-    for message in reversed(result_state["messages"]):
-        if isinstance(message, AIMessage):
-            content = message.content
-            answer = content if isinstance(content, str) else str(content)
-            return AgentResponse(answer=answer, sources=[])
-
-    return AgentResponse(answer="No answer generated.", sources=[])
-
-
-def main():
-    print("Hello from langchain-course!")
-    query = (
-        "Search for 3 job postings for an AI engineer using LangChain in the Bay Area "
-        "on LinkedIn and list their details."
-    )
-    result = run_job_search(query)
-    print(result)
+def find_tool_by_name(tools: List[BaseTool], tool_name: str) -> BaseTool:
+    for tool in tools:
+        if tool.name == tool_name:
+            return tool
+    raise ValueError(f"Tool wtih name {tool_name} not found")
 
 
 if __name__ == "__main__":
-    main()
+    print("Hello LangChain Tools (.bind_tools)!")
+    tools = [get_text_length]
+
+    llm = ChatOpenAI(
+        temperature=0,
+        callbacks=[AgentCallbackHandler()],
+    )
+    llm_with_tools = llm.bind_tools(tools)
+
+    # Start conversation
+    messages = [HumanMessage(content="What is the length of the word: DOG")]
+
+    while True:
+        ai_message = llm_with_tools.invoke(messages)
+
+        # If the model decides to call tools, execute them and return results
+        tool_calls = getattr(ai_message, "tool_calls", None) or []
+        if len(tool_calls) > 0:
+            messages.append(ai_message)
+            for tool_call in tool_calls:
+                # tool_call is typically a dict with keys: id, type, name, args
+                tool_name = tool_call.get("name")
+                tool_args = tool_call.get("args", {})
+                tool_call_id = tool_call.get("id")
+
+                tool_to_use = find_tool_by_name(tools, tool_name)
+                observation = tool_to_use.invoke(tool_args)
+                print(f"observation={observation}")
+
+                messages.append(
+                    ToolMessage(content=str(observation), tool_call_id=tool_call_id)
+                )
+            # Continue loop to allow the model to use the observations
+            continue
+
+        # No tool calls -> final answer
+        print(ai_message.content)
+        break

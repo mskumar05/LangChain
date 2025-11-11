@@ -12,6 +12,7 @@ dependencies = [
     "langchain-classic>=1.0.0",
     "langchain-ollama>=1.0.0",
     "langchain-openai>=1.0.1",
+    "langchain-pinecone>=0.2.13",
     "langchain-tavily>=0.2.12",
     "pydantic>=2.12.3",
     "python-dotenv>=1.2.1",
